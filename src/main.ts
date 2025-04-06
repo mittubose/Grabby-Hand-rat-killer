@@ -493,6 +493,46 @@ class Rat {
     }
 }
 
+// Type definitions
+interface WeaponItem {
+    name: string;
+    damage: number;
+    speed: number;
+    unlockLevel: number;
+    cost: number;
+    owned: boolean;
+}
+
+interface ArmorItem {
+    name: string;
+    defense: number;
+    unlockLevel: number;
+    cost: number;
+    owned: boolean;
+}
+
+interface HealthItem {
+    name: string;
+    heal: number;
+    cost: number;
+    quantity: number;
+}
+
+interface ShopItem {
+    id: string;
+    type: 'weapon' | 'armor' | 'health';
+    disabled: boolean;
+    name: string;
+    cost: number;
+    damage?: number;
+    speed?: number;
+    defense?: number;
+    heal?: number;
+    unlockLevel?: number;
+    owned?: boolean;
+    quantity?: number;
+}
+
 class Game {
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
@@ -542,7 +582,8 @@ class Game {
         jump: 'Space',
         run: 'ShiftLeft',
         interact: 'KeyE',
-        rightHand: 'KeyR'
+        rightHand: 'KeyR',
+        store: 'KeyG'  // Add store key binding
     };
     private settings: {
         sensitivity: number;
@@ -599,6 +640,36 @@ class Game {
     private puzzleWall: THREE.Mesh | null = null;
     private puzzleUI: THREE.Group | null = null;
     private puzzleUIActive: boolean = false;
+
+    // Weapon system
+    private weapons: { [key: string]: WeaponItem } = {
+        basic: { name: 'Basic Hand', damage: 1, speed: 30, unlockLevel: 1, cost: 0, owned: true },
+        plasma: { name: 'Plasma Hand', damage: 2, speed: 35, unlockLevel: 2, cost: 200, owned: false },
+        laser: { name: 'Laser Hand', damage: 3, speed: 40, unlockLevel: 3, cost: 400, owned: false },
+        quantum: { name: 'Quantum Hand', damage: 4, speed: 45, unlockLevel: 5, cost: 800, owned: false },
+        ultimate: { name: 'Ultimate Hand', damage: 5, speed: 50, unlockLevel: 8, cost: 1500, owned: false }
+    };
+
+    // Armor system
+    private armor: { [key: string]: ArmorItem } = {
+        none: { name: 'No Armor', defense: 0, unlockLevel: 1, cost: 0, owned: true },
+        light: { name: 'Light Armor', defense: 10, unlockLevel: 2, cost: 150, owned: false },
+        medium: { name: 'Medium Armor', defense: 20, unlockLevel: 4, cost: 300, owned: false },
+        heavy: { name: 'Heavy Armor', defense: 30, unlockLevel: 6, cost: 600, owned: false },
+        ultimate: { name: 'Ultimate Armor', defense: 40, unlockLevel: 10, cost: 1000, owned: false }
+    };
+
+    // Health items
+    private healthItems: { [key: string]: HealthItem } = {
+        smallPotion: { name: 'Small Health Potion', heal: 20, cost: 50, quantity: 0 },
+        mediumPotion: { name: 'Medium Health Potion', heal: 40, cost: 100, quantity: 0 },
+        largePotion: { name: 'Large Health Potion', heal: 60, cost: 150, quantity: 0 },
+        fullPotion: { name: 'Full Health Potion', heal: 100, cost: 250, quantity: 0 }
+    };
+
+    private equippedWeapon = 'basic';
+    private equippedArmor = 'none';
+    private defense: number = 0;
 
     constructor() {
         this.showLoadingScreen();
@@ -705,6 +776,9 @@ class Game {
                             this.canJump = false;
                             setTimeout(() => this.canJump = true, 500);
                         }
+                        break;
+                    case this.keyBindings.store:
+                        this.toggleStore();
                         break;
                 }
             }
@@ -1213,13 +1287,13 @@ class Game {
     }
 
     private takeDamage(amount: number, attackerPosition?: THREE.Vector3): void {
-        this.life = Math.max(0, this.life - amount);
+        const reducedDamage = Math.max(0, amount - (this.defense / 100 * amount));
+        this.life = Math.max(0, this.life - reducedDamage);
         
         if (attackerPosition) {
             this.showDamageDirection(attackerPosition);
             
-            // Add screen shake effect
-            const shakeIntensity = amount / 20;
+            const shakeIntensity = reducedDamage / 20;
             this.camera.position.x += (Math.random() - 0.5) * shakeIntensity;
             this.camera.position.y += (Math.random() - 0.5) * shakeIntensity;
             this.camera.position.z += (Math.random() - 0.5) * shakeIntensity;
@@ -1761,13 +1835,32 @@ class Game {
         );
         this.minimapCamera.up.set(0, 0, -1);
 
-        // Add player marker (green triangle for direction)
+        // Add player marker (blue dot)
         const playerMarker = new THREE.Mesh(
-            new THREE.CircleGeometry(1, 3),
-            new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+            new THREE.CircleGeometry(1.5, 32),
+            new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            })
         );
+        playerMarker.renderOrder = 1; // Ensure player is drawn on top
         this.minimapObjects.player = playerMarker;
         this.minimapScene.add(playerMarker);
+
+        // Add direction indicator
+        const directionIndicator = new THREE.Mesh(
+            new THREE.ConeGeometry(0.8, 2, 3),
+            new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.8,
+                side: THREE.DoubleSide
+            })
+        );
+        directionIndicator.position.y = 0.1;
+        playerMarker.add(directionIndicator);
 
         // Add minimap border
         const borderGeometry = new THREE.RingGeometry(this.minimapRadius - 1, this.minimapRadius, 32);
@@ -1796,6 +1889,7 @@ class Game {
             50,
             this.camera.position.z
         );
+        this.minimapCamera.lookAt(this.camera.position.x, 0, this.camera.position.z);
 
         // Get player's forward direction
         const forward = new THREE.Vector3(0, 0, -1)
@@ -1818,13 +1912,15 @@ class Game {
             const bossMarkerId = 'boss_rat';
             if (!this.minimapObjects[bossMarkerId]) {
                 const bossMarker = new THREE.Mesh(
-                    new THREE.CircleGeometry(2, 32),
+                    new THREE.CircleGeometry(3, 32),
                     new THREE.MeshBasicMaterial({ 
                         color: 0xff0000,
                         transparent: true,
-                        opacity: 0.8
+                        opacity: 0.8,
+                        side: THREE.DoubleSide
                     })
                 );
+                bossMarker.renderOrder = 1;
                 this.minimapObjects[bossMarkerId] = bossMarker;
                 this.minimapScene.add(bossMarker);
 
@@ -1833,14 +1929,20 @@ class Game {
                 const healthBarHeight = 0.5;
                 const healthBarBg = new THREE.Mesh(
                     new THREE.PlaneGeometry(healthBarWidth, healthBarHeight),
-                    new THREE.MeshBasicMaterial({ color: 0x333333 })
+                    new THREE.MeshBasicMaterial({ 
+                        color: 0x333333,
+                        side: THREE.DoubleSide
+                    })
                 );
                 healthBarBg.position.y = 2;
                 bossMarker.add(healthBarBg);
 
                 const healthBarFg = new THREE.Mesh(
                     new THREE.PlaneGeometry(healthBarWidth, healthBarHeight),
-                    new THREE.MeshBasicMaterial({ color: 0xff0000 })
+                    new THREE.MeshBasicMaterial({ 
+                        color: 0xff0000,
+                        side: THREE.DoubleSide
+                    })
                 );
                 healthBarFg.position.y = 2;
                 healthBarFg.userData.isHealthBar = true;
@@ -1865,13 +1967,15 @@ class Game {
             const markerId = `rat_${index}`;
             if (!this.minimapObjects[markerId]) {
                 const ratMarker = new THREE.Mesh(
-                    new THREE.CircleGeometry(0.5, 16),
+                    new THREE.CircleGeometry(1.2, 32),
                     new THREE.MeshBasicMaterial({ 
                         color: 0xff0000,
                         transparent: true,
-                        opacity: 0.8
+                        opacity: 0.8,
+                        side: THREE.DoubleSide
                     })
                 );
+                ratMarker.renderOrder = 1;
                 this.minimapObjects[markerId] = ratMarker;
                 this.minimapScene.add(ratMarker);
             }
@@ -2141,48 +2245,153 @@ class Game {
         shop.style.transform = 'translate(-50%, -50%)';
         shop.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
         shop.style.padding = '20px';
+        shop.style.width = '800px';
         shop.style.borderRadius = '10px';
         shop.style.border = '2px solid #ffff00';
         shop.style.color = 'white';
         shop.style.zIndex = '1000';
 
         const title = document.createElement('h2');
-        title.textContent = 'UPGRADE SHOP';
+        title.textContent = 'SHOP';
         title.style.textAlign = 'center';
         title.style.color = '#ffff00';
         shop.appendChild(title);
 
-        const upgrades = [
-            { name: 'Damage +1', cost: 100, action: () => { this.projectileDamage++; } },
-            { name: 'Projectile Speed +10', cost: 150, action: () => { this.projectileSpeed += 10; } },
-            { name: 'Health +20', cost: 200, action: () => { this.life = Math.min(100, this.life + 20); } }
-        ];
+        // Create tabs
+        const tabs = document.createElement('div');
+        tabs.style.display = 'flex';
+        tabs.style.marginBottom = '20px';
+        tabs.style.borderBottom = '2px solid #ffff00';
 
-        upgrades.forEach(upgrade => {
-            const button = document.createElement('button');
-            button.textContent = `${upgrade.name} (${upgrade.cost} coins)`;
-            button.style.display = 'block';
-            button.style.margin = '10px 0';
-            button.style.padding = '10px';
-            button.style.width = '100%';
-            button.style.backgroundColor = this.coins >= upgrade.cost ? '#4CAF50' : '#666';
-            button.style.border = 'none';
-            button.style.borderRadius = '5px';
-            button.style.color = 'white';
-            button.style.cursor = this.coins >= upgrade.cost ? 'pointer' : 'not-allowed';
-            
-            button.onclick = () => {
-                if (this.coins >= upgrade.cost) {
-                    this.coins -= upgrade.cost;
-                    upgrade.action();
-                    this.updateHUD();
-                    button.style.backgroundColor = '#666';
-                    button.style.cursor = 'not-allowed';
-                }
+        const categories = ['Weapons', 'Armor', 'Health Items'];
+        categories.forEach((category, index) => {
+            const tab = document.createElement('div');
+            tab.textContent = category;
+            tab.style.padding = '10px 20px';
+            tab.style.cursor = 'pointer';
+            tab.style.backgroundColor = index === 0 ? '#ffff00' : 'transparent';
+            tab.style.color = index === 0 ? 'black' : 'white';
+            tab.onclick = () => {
+                Array.from(tabs.children).forEach(t => {
+                    (t as HTMLElement).style.backgroundColor = 'transparent';
+                    (t as HTMLElement).style.color = 'white';
+                });
+                tab.style.backgroundColor = '#ffff00';
+                tab.style.color = 'black';
+                showCategory(category);
             };
-            
-            shop.appendChild(button);
+            tabs.appendChild(tab);
         });
+        shop.appendChild(tabs);
+
+        const content = document.createElement('div');
+        content.id = 'shop-content';
+        shop.appendChild(content);
+
+        const showCategory = (category: string) => {
+            content.innerHTML = '';
+            let items: ShopItem[] = [];
+            
+            switch(category) {
+                case 'Weapons':
+                    items = Object.entries(this.weapons).map(([id, weapon]) => ({
+                        id,
+                        ...weapon,
+                        type: 'weapon',
+                        disabled: weapon.owned || weapon.unlockLevel > this.level || weapon.cost > this.coins
+                    }));
+                    break;
+                case 'Armor':
+                    items = Object.entries(this.armor).map(([id, armor]) => ({
+                        id,
+                        ...armor,
+                        type: 'armor',
+                        disabled: armor.owned || armor.unlockLevel > this.level || armor.cost > this.coins
+                    }));
+                    break;
+                case 'Health Items':
+                    items = Object.entries(this.healthItems).map(([id, item]) => ({
+                        id,
+                        ...item,
+                        type: 'health',
+                        disabled: item.cost > this.coins
+                    }));
+                    break;
+                default:
+                    items = [];
+            }
+
+            items.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.style.margin = '10px 0';
+                itemDiv.style.padding = '10px';
+                itemDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+                itemDiv.style.borderRadius = '5px';
+                itemDiv.style.display = 'flex';
+                itemDiv.style.justifyContent = 'space-between';
+                itemDiv.style.alignItems = 'center';
+
+                const info = document.createElement('div');
+                info.innerHTML = `
+                    <div style="font-size: 18px; color: ${item.owned ? '#00ff00' : 'white'}">${item.name}</div>
+                    <div style="font-size: 14px; color: #aaa">
+                        ${item.type === 'weapon' ? `Damage: ${item.damage}, Speed: ${item.speed}` :
+                          item.type === 'armor' ? `Defense: ${item.defense}` :
+                          `Heal: ${item.heal}`}
+                        ${item.type !== 'health' ? `, Required Level: ${item.unlockLevel}` : ''}
+                    </div>
+                `;
+                itemDiv.appendChild(info);
+
+                const buyButton = document.createElement('button');
+                buyButton.textContent = item.owned ? 'Owned' : 
+                                      item.type === 'health' ? `Buy (${item.cost} coins)` :
+                                      `Purchase (${item.cost} coins)`;
+                buyButton.style.padding = '8px 16px';
+                buyButton.style.backgroundColor = item.disabled ? '#666' : '#4CAF50';
+                buyButton.style.border = 'none';
+                buyButton.style.borderRadius = '5px';
+                buyButton.style.color = 'white';
+                buyButton.style.cursor = item.disabled ? 'not-allowed' : 'pointer';
+                
+                if (!item.disabled) {
+                    buyButton.onclick = () => {
+                        if (this.coins >= item.cost) {
+                            this.coins -= item.cost;
+                            
+                            switch(item.type) {
+                                case 'weapon':
+                                    if (item.damage !== undefined && item.speed !== undefined) {
+                                        this.weapons[item.id].owned = true;
+                                        this.equippedWeapon = item.id;
+                                        this.projectileDamage = item.damage;
+                                        this.projectileSpeed = item.speed;
+                                    }
+                                    break;
+                                case 'armor':
+                                    if (item.defense !== undefined) {
+                                        this.armor[item.id].owned = true;
+                                        this.equippedArmor = item.id;
+                                        this.defense = item.defense;
+                                    }
+                                    break;
+                                case 'health':
+                                    this.healthItems[item.id].quantity++;
+                                    break;
+                            }
+                            
+                            this.updateHUD();
+                            showCategory(category); // Refresh the current category
+                        }
+                    };
+                }
+                
+                itemDiv.appendChild(buyButton);
+                content.appendChild(itemDiv);
+            });
+        };
+
+        showCategory('Weapons'); // Show weapons by default
 
         const closeButton = document.createElement('button');
         closeButton.textContent = 'Close';
@@ -2195,6 +2404,317 @@ class Game {
         closeButton.style.color = 'white';
         closeButton.style.cursor = 'pointer';
         closeButton.onclick = () => shop.remove();
+        shop.appendChild(closeButton);
+
+        document.body.appendChild(shop);
+    }
+
+    // Add method to use health items
+    private useHealthItem(itemId: string): void {
+        const item = this.healthItems[itemId];
+        if (item.quantity > 0) {
+            this.life = Math.min(100, this.life + item.heal);
+            item.quantity--;
+            this.updateHUD();
+        }
+    }
+
+    private toggleStore(): void {
+        this.isPaused = !this.isPaused;
+        if (this.isPaused) {
+            this.showStore();
+            this.controls.unlock();
+        } else {
+            const shop = document.querySelector('.shop-container');
+            if (shop) shop.remove();
+            this.controls.lock();
+        }
+    }
+
+    private showStore(): void {
+        const shop = document.createElement('div');
+        shop.className = 'shop-container';
+        shop.style.position = 'fixed';
+        shop.style.top = '50%';
+        shop.style.left = '50%';
+        shop.style.transform = 'translate(-50%, -50%)';
+        shop.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+        shop.style.padding = '20px';
+        shop.style.width = '1000px';
+        shop.style.height = '80vh';
+        shop.style.borderRadius = '10px';
+        shop.style.border = '2px solid #ffff00';
+        shop.style.color = 'white';
+        shop.style.zIndex = '1000';
+        shop.style.display = 'flex';
+        shop.style.flexDirection = 'column';
+
+        const title = document.createElement('h2');
+        title.textContent = 'EQUIPMENT & STORE';
+        title.style.textAlign = 'center';
+        title.style.color = '#ffff00';
+        title.style.marginBottom = '20px';
+        shop.appendChild(title);
+
+        // Create main content container
+        const content = document.createElement('div');
+        content.style.display = 'flex';
+        content.style.gap = '20px';
+        content.style.height = '100%';
+
+        // Equipment section
+        const equipmentSection = document.createElement('div');
+        equipmentSection.style.flex = '0 0 300px';
+        equipmentSection.style.padding = '15px';
+        equipmentSection.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+        equipmentSection.style.borderRadius = '8px';
+
+        const equipmentTitle = document.createElement('h3');
+        equipmentTitle.textContent = 'Equipment';
+        equipmentTitle.style.marginBottom = '15px';
+        equipmentTitle.style.color = '#ffff00';
+        equipmentSection.appendChild(equipmentTitle);
+
+        // Equipment slots
+        const slots = [
+            { name: 'Weapon', item: this.weapons[this.equippedWeapon] as WeaponItem },
+            { name: 'Armor', item: this.armor[this.equippedArmor] as ArmorItem }
+        ];
+
+        slots.forEach(slot => {
+            const slotDiv = document.createElement('div');
+            slotDiv.style.marginBottom = '15px';
+            slotDiv.style.padding = '10px';
+            slotDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+            slotDiv.style.borderRadius = '5px';
+            slotDiv.style.border = '1px solid #444';
+
+            const slotTitle = document.createElement('div');
+            slotTitle.textContent = slot.name;
+            slotTitle.style.color = '#aaa';
+            slotTitle.style.marginBottom = '5px';
+            slotDiv.appendChild(slotTitle);
+
+            const itemName = document.createElement('div');
+            itemName.textContent = slot.item.name;
+            itemName.style.color = '#fff';
+            slotDiv.appendChild(itemName);
+
+            const stats = document.createElement('div');
+            stats.style.fontSize = '12px';
+            stats.style.color = '#888';
+            if (slot.name === 'Weapon' && 'damage' in slot.item && 'speed' in slot.item) {
+                stats.textContent = `Damage: ${slot.item.damage}, Speed: ${slot.item.speed}`;
+            } else if (slot.name === 'Armor' && 'defense' in slot.item) {
+                stats.textContent = `Defense: ${slot.item.defense}`;
+            }
+            slotDiv.appendChild(stats);
+
+            equipmentSection.appendChild(slotDiv);
+        });
+
+        // Inventory section
+        const inventoryTitle = document.createElement('h3');
+        inventoryTitle.textContent = 'Health Items';
+        inventoryTitle.style.marginTop = '20px';
+        inventoryTitle.style.marginBottom = '15px';
+        inventoryTitle.style.color = '#ffff00';
+        equipmentSection.appendChild(inventoryTitle);
+
+        Object.entries(this.healthItems).forEach(([id, item]) => {
+            if (item.quantity > 0) {
+                const itemDiv = document.createElement('div');
+                itemDiv.style.marginBottom = '10px';
+                itemDiv.style.padding = '8px';
+                itemDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+                itemDiv.style.borderRadius = '5px';
+                itemDiv.style.display = 'flex';
+                itemDiv.style.justifyContent = 'space-between';
+                itemDiv.style.alignItems = 'center';
+
+                const itemInfo = document.createElement('div');
+                itemInfo.innerHTML = `
+                    <div>${item.name}</div>
+                    <div style="font-size: 12px; color: #888">Heal: ${item.heal}</div>
+                    <div style="font-size: 12px; color: #888">Quantity: ${item.quantity}</div>
+                `;
+                itemDiv.appendChild(itemInfo);
+
+                const useButton = document.createElement('button');
+                useButton.textContent = 'Use';
+                useButton.style.padding = '5px 10px';
+                useButton.style.backgroundColor = '#4CAF50';
+                useButton.style.border = 'none';
+                useButton.style.borderRadius = '3px';
+                useButton.style.color = 'white';
+                useButton.style.cursor = 'pointer';
+                useButton.onclick = () => {
+                    this.useHealthItem(id);
+                    this.toggleStore();
+                    this.toggleStore(); // Refresh the store
+                };
+                itemDiv.appendChild(useButton);
+
+                equipmentSection.appendChild(itemDiv);
+            }
+        });
+
+        content.appendChild(equipmentSection);
+
+        // Store section
+        const storeSection = document.createElement('div');
+        storeSection.style.flex = '1';
+        content.appendChild(storeSection);
+
+        // Create tabs
+        const tabs = document.createElement('div');
+        tabs.style.display = 'flex';
+        tabs.style.marginBottom = '20px';
+        tabs.style.borderBottom = '2px solid #ffff00';
+
+        const categories = ['Weapons', 'Armor', 'Health Items'];
+        categories.forEach((category, index) => {
+            const tab = document.createElement('div');
+            tab.textContent = category;
+            tab.style.padding = '10px 20px';
+            tab.style.cursor = 'pointer';
+            tab.style.backgroundColor = index === 0 ? '#ffff00' : 'transparent';
+            tab.style.color = index === 0 ? 'black' : 'white';
+            tab.onclick = () => {
+                Array.from(tabs.children).forEach(t => {
+                    (t as HTMLElement).style.backgroundColor = 'transparent';
+                    (t as HTMLElement).style.color = 'white';
+                });
+                tab.style.backgroundColor = '#ffff00';
+                tab.style.color = 'black';
+                showCategory(category);
+            };
+            tabs.appendChild(tab);
+        });
+        storeSection.appendChild(tabs);
+
+        const storeContent = document.createElement('div');
+        storeContent.id = 'shop-content';
+        storeContent.style.overflowY = 'auto';
+        storeContent.style.maxHeight = 'calc(80vh - 150px)';
+        storeSection.appendChild(storeContent);
+
+        const showCategory = (category: string) => {
+            storeContent.innerHTML = '';
+            let items: ShopItem[] = [];
+            
+            switch(category) {
+                case 'Weapons':
+                    items = Object.entries(this.weapons).map(([id, weapon]) => ({
+                        id,
+                        ...weapon,
+                        type: 'weapon',
+                        disabled: weapon.owned || weapon.unlockLevel > this.level || weapon.cost > this.coins
+                    }));
+                    break;
+                case 'Armor':
+                    items = Object.entries(this.armor).map(([id, armor]) => ({
+                        id,
+                        ...armor,
+                        type: 'armor',
+                        disabled: armor.owned || armor.unlockLevel > this.level || armor.cost > this.coins
+                    }));
+                    break;
+                case 'Health Items':
+                    items = Object.entries(this.healthItems).map(([id, item]) => ({
+                        id,
+                        ...item,
+                        type: 'health',
+                        disabled: item.cost > this.coins
+                    }));
+                    break;
+            }
+
+            items.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.style.margin = '10px 0';
+                itemDiv.style.padding = '10px';
+                itemDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+                itemDiv.style.borderRadius = '5px';
+                itemDiv.style.display = 'flex';
+                itemDiv.style.justifyContent = 'space-between';
+                itemDiv.style.alignItems = 'center';
+
+                const info = document.createElement('div');
+                info.innerHTML = `
+                    <div style="font-size: 18px; color: ${item.owned ? '#00ff00' : 'white'}">${item.name}</div>
+                    <div style="font-size: 14px; color: #aaa">
+                        ${item.type === 'weapon' ? `Damage: ${item.damage}, Speed: ${item.speed}` :
+                          item.type === 'armor' ? `Defense: ${item.defense}` :
+                          `Heal: ${item.heal}`}
+                        ${item.type !== 'health' ? `, Required Level: ${item.unlockLevel}` : ''}
+                    </div>
+                `;
+                itemDiv.appendChild(info);
+
+                const buyButton = document.createElement('button');
+                buyButton.textContent = item.owned ? 'Owned' : 
+                                      item.type === 'health' ? `Buy (${item.cost} coins)` :
+                                      `Purchase (${item.cost} coins)`;
+                buyButton.style.padding = '8px 16px';
+                buyButton.style.backgroundColor = item.disabled ? '#666' : '#4CAF50';
+                buyButton.style.border = 'none';
+                buyButton.style.borderRadius = '5px';
+                buyButton.style.color = 'white';
+                buyButton.style.cursor = item.disabled ? 'not-allowed' : 'pointer';
+                
+                if (!item.disabled) {
+                    buyButton.onclick = () => {
+                        if (this.coins >= item.cost) {
+                            this.coins -= item.cost;
+                            
+                            switch(item.type) {
+                                case 'weapon':
+                                    if (item.damage !== undefined && item.speed !== undefined) {
+                                        this.weapons[item.id].owned = true;
+                                        this.equippedWeapon = item.id;
+                                        this.projectileDamage = item.damage;
+                                        this.projectileSpeed = item.speed;
+                                    }
+                                    break;
+                                case 'armor':
+                                    if (item.defense !== undefined) {
+                                        this.armor[item.id].owned = true;
+                                        this.equippedArmor = item.id;
+                                        this.defense = item.defense;
+                                    }
+                                    break;
+                                case 'health':
+                                    this.healthItems[item.id].quantity++;
+                                    break;
+                            }
+                            
+                            this.updateHUD();
+                            this.toggleStore();
+                            this.toggleStore(); // Refresh the store
+                        }
+                    };
+                }
+                
+                itemDiv.appendChild(buyButton);
+                storeContent.appendChild(itemDiv);
+            });
+        };
+
+        showCategory('Weapons'); // Show weapons by default
+        shop.appendChild(content);
+
+        const closeButton = document.createElement('button');
+        closeButton.textContent = 'Close (G)';
+        closeButton.style.display = 'block';
+        closeButton.style.margin = '20px auto 0';
+        closeButton.style.padding = '10px 20px';
+        closeButton.style.backgroundColor = '#ff4444';
+        closeButton.style.border = 'none';
+        closeButton.style.borderRadius = '5px';
+        closeButton.style.color = 'white';
+        closeButton.style.cursor = 'pointer';
+        closeButton.onclick = () => this.toggleStore();
         shop.appendChild(closeButton);
 
         document.body.appendChild(shop);
