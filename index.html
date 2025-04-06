@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grabby Hands Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        #crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            pointer-events: none;
+        }
+        #ui-container {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+        #fps {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 16px;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+            pointer-events: none;
+            display: none;
+        }
+        #timer {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        #puzzle-status {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        #instructions {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            text-align: center;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+        #game-over {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 36px;
+            text-align: center;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+        #start-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 1000;
+        }
+        #start-button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 24px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        #start-button:hover {
+            background: #45a049;
+        }
+        .key-hint {
+            position: fixed;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 5px;
+            pointer-events: none;
+            display: none;
+        }
+        #loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            color: white;
+        }
+        
+        #loading-title {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #4CAF50;
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+        
+        #loading-progress {
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s ease;
+        }
+
+        #hud {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 20px;
+            pointer-events: none;
+        }
+
+        #life-bar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            width: 200px;
+            height: 20px;
+            background-color: rgba(0, 0, 0, 0.5);
+            border: 2px solid white;
+        }
+
+        #life-fill {
+            height: 100%;
+            width: 100%;
+            background-color: #ff0000;
+            transition: width 0.3s;
+        }
+
+        #score {
+            position: fixed;
+            top: 50px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            font-family: Arial, sans-serif;
+            text-shadow: 2px 2px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        #item-box {
+            width: 60px;
+            height: 60px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid #fff;
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 24px;
+        }
+
+        .menu-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 2000;
+        }
+
+        .menu-button {
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 250px;
+            text-align: center;
+        }
+
+        .menu-button:hover {
+            background: #45a049;
+            transform: scale(1.05);
+        }
+
+        .back-button {
+            background: #666;
+        }
+
+        .back-button:hover {
+            background: #555;
+        }
+
+        .settings-group {
+            margin: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        .settings-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+        }
+
+        .settings-label {
+            font-size: 18px;
+        }
+
+        .settings-input {
+            width: 150px;
+            padding: 5px;
+            border-radius: 5px;
+            border: none;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .key-bind-button {
+            padding: 8px 15px;
+            background: #333;
+            border: 1px solid #666;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .key-bind-button.listening {
+            background: #4CAF50;
+        }
+
+        #interaction-prompt {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 18px;
+            display: none;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .puzzle-piece {
+            cursor: pointer;
+            transition: transform 0.2s;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .puzzle-piece:hover {
+            transform: scale(1.02);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .puzzle-complete {
+            animation: glow 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes glow {
+            from {
+                text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 15px #ffff00, 0 0 20px #ffff00;
+            }
+            to {
+                text-shadow: 0 0 10px #fff, 0 0 20px #fff, 0 0 30px #ffff00, 0 0 40px #ffff00;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <h1 id="loading-title">Grabby Hands Game</h1>
+        <div id="loading-progress">
+            <div id="loading-bar"></div>
+        </div>
+    </div>
+
+    <div id="hud">
+        <div id="life-bar">
+            <div id="life-fill"></div>
+        </div>
+        <div id="score">Score: 0 | Rats Killed: 0</div>
+        <div id="item-box"></div>
+    </div>
+
+    <div id="start-screen">
+        <h1>Escape the Lab!</h1>
+        <div id="instructions">
+            <h2>Controls:</h2>
+            <p>WASD - Move</p>
+            <p>SPACE - Jump</p>
+            <p>Left Click - Left Grappling Hand</p>
+            <p>Right Click/E - Right Grappling Hand</p>
+            <p>Mouse - Look Around</p>
+        </div>
+        <button id="start-button">Start Game</button>
+    </div>
+
+    <div id="ui-container">
+        <div id="timer">Time Left: 5:00</div>
+        <div id="puzzle-status">Current Puzzle: Find the first key</div>
+    </div>
+
+    <div id="fps">FPS: 60</div>
+
+    <div id="crosshair">+</div>
+    
+    <div id="instructions"></div>
+    
+    <div id="game-over">
+        <h2>Game Over</h2>
+        <p id="game-over-message"></p>
+        <button onclick="location.reload()">Try Again</button>
+    </div>
+
+    <div id="pause-menu" class="menu-screen">
+        <h2>Game Paused</h2>
+        <button class="menu-button" id="resume-button">Resume Game</button>
+        <button class="menu-button" id="settings-button">Settings</button>
+        <button class="menu-button" id="controls-button">Controls</button>
+        <button class="menu-button back-button" id="quit-button">Quit to Menu</button>
+    </div>
+
+    <div id="settings-menu" class="menu-screen">
+        <h2>Settings</h2>
+        <div class="settings-group">
+            <div class="settings-row">
+                <span class="settings-label">Mouse Sensitivity</span>
+                <input type="range" id="sensitivity-slider" class="settings-input" min="1" max="10" value="5">
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Sound Volume</span>
+                <input type="range" id="volume-slider" class="settings-input" min="0" max="100" value="100">
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Show FPS</span>
+                <input type="checkbox" id="show-fps" class="settings-input">
+            </div>
+        </div>
+        <button class="menu-button back-button" id="settings-back">Back</button>
+    </div>
+
+    <div id="controls-menu" class="menu-screen">
+        <h2>Controls</h2>
+        <div class="settings-group">
+            <div class="settings-row">
+                <span class="settings-label">Move Forward</span>
+                <button class="key-bind-button" data-action="forward">W</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Move Backward</span>
+                <button class="key-bind-button" data-action="backward">S</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Move Left</span>
+                <button class="key-bind-button" data-action="left">A</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Move Right</span>
+                <button class="key-bind-button" data-action="right">D</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Jump</span>
+                <button class="key-bind-button" data-action="jump">SPACE</button>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Right Hand</span>
+                <button class="key-bind-button" data-action="rightHand">E</button>
+            </div>
+        </div>
+        <button class="menu-button back-button" id="controls-back">Back</button>
+    </div>
+
+    <div id="interaction-prompt"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html> 
