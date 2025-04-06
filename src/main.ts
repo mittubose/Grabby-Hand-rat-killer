@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 import { Font, FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
+import { StoreManager } from './store/StoreManager';
+import { Difficulty, RatConfig, difficultySettings, levelProgression } from './config/game/difficulty';
 
 interface Puzzle {
     id: number;
@@ -283,15 +285,45 @@ class Rat {
     private isBoss: boolean;
     private maxHealth: number;
     private scale: number;
+    private isExplosive: boolean;
+    private explosionRadius: number;
+    private explosionDamage: number;
+    private zigzagAmplitude: number;
+    private zigzagFrequency: number;
+    private zigzagOffset: number;
+    private speed: number;
+    private damage: number;
+    private glowMaterial: THREE.MeshStandardMaterial | null = null;
+    private glowIntensity: number = 0;
+    private game: Game;
+    private readonly FLOOR_Y = 0.1; // Slight offset from ground
+    private readonly MOVEMENT_SMOOTHING = 0.1; // For smoother direction changes
+    private currentDirection: THREE.Vector3 = new THREE.Vector3();
 
-    constructor(scene: THREE.Scene, target: THREE.PerspectiveCamera, position: THREE.Vector3, isBoss: boolean = false) {
+    constructor(
+        scene: THREE.Scene, 
+        target: THREE.PerspectiveCamera, 
+        position: THREE.Vector3,
+        config: RatConfig,
+        game: Game,
+        isExplosive: boolean = false,
+        isBoss: boolean = false
+    ) {
         this.scene = scene;
         this.target = target;
+        this.game = game;
         this.velocity = new THREE.Vector3();
         this.isBoss = isBoss;
-        this.maxHealth = isBoss ? 10 : 2; // Boss has more health
-        this.health = this.maxHealth;
-        this.scale = isBoss ? 2.5 : 1; // Boss is bigger
+        this.isExplosive = isExplosive;
+        this.explosionRadius = config.explosionRadius;
+        this.explosionDamage = config.explosionDamage;
+        this.zigzagAmplitude = config.zigzagAmplitude;
+        this.zigzagFrequency = config.zigzagFrequency;
+        this.zigzagOffset = Math.random() * Math.PI * 2;
+        this.speed = config.baseSpeed;
+        this.damage = config.baseDamage;
+        this.health = this.maxHealth = isBoss ? config.baseHealth * 5 : config.baseHealth;
+        this.scale = isBoss ? 2 : 0.6; // Make regular rats smaller
 
         // Create rat model
         this.rat = new THREE.Group();
@@ -300,127 +332,176 @@ class Rat {
         const body = new THREE.Mesh(
             new THREE.BoxGeometry(0.3 * this.scale, 0.2 * this.scale, 0.5 * this.scale),
             new THREE.MeshStandardMaterial({ 
-                color: isBoss ? 0x8B0000 : 0x505050,
-                emissive: isBoss ? 0x8B0000 : 0x000000,
-                emissiveIntensity: isBoss ? 0.5 : 0
+                color: isBoss ? 0x8B0000 : (isExplosive ? 0x00ff00 : 0x505050),
+                emissive: isBoss ? 0x8B0000 : (isExplosive ? 0x00ff00 : 0x000000),
+                emissiveIntensity: (isBoss || isExplosive) ? 0.5 : 0
             })
         );
-        
+
         // Head
         const head = new THREE.Mesh(
-            new THREE.BoxGeometry(0.2, 0.2, 0.2),
-            new THREE.MeshStandardMaterial({ color: 0x505050 })
+            new THREE.BoxGeometry(0.2 * this.scale, 0.2 * this.scale, 0.2 * this.scale),
+            new THREE.MeshStandardMaterial({ color: isExplosive ? 0x00ff00 : 0x505050 })
         );
-        head.position.z = 0.3;
+        head.position.z = 0.3 * this.scale;
         
         // Tail
         const tail = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.02, 0.02, 0.4),
-            new THREE.MeshStandardMaterial({ color: 0x505050 })
+            new THREE.CylinderGeometry(0.02 * this.scale, 0.02 * this.scale, 0.4 * this.scale),
+            new THREE.MeshStandardMaterial({ color: isExplosive ? 0x00ff00 : 0x505050 })
         );
         tail.rotation.x = Math.PI / 2;
-        tail.position.z = -0.3;
+        tail.position.z = -0.3 * this.scale;
         
         // Legs
         for (let i = 0; i < 4; i++) {
             const leg = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.02, 0.02, 0.15),
-                new THREE.MeshStandardMaterial({ color: 0x505050 })
+                new THREE.CylinderGeometry(0.02 * this.scale, 0.02 * this.scale, 0.15 * this.scale),
+                new THREE.MeshStandardMaterial({ color: isExplosive ? 0x00ff00 : 0x505050 })
             );
-            leg.position.y = -0.1;
-            leg.position.x = (i < 2 ? 0.1 : -0.1);
-            leg.position.z = (i % 2 === 0 ? 0.1 : -0.1);
+            leg.position.y = -0.1 * this.scale;
+            leg.position.x = (i < 2 ? 0.1 : -0.1) * this.scale;
+            leg.position.z = (i % 2 === 0 ? 0.1 : -0.1) * this.scale;
             this.rat.add(leg);
         }
 
-        // Eyes (red)
+        // Eyes (red for normal, brighter green for explosive)
         for (let i = 0; i < 2; i++) {
             const eye = new THREE.Mesh(
-                new THREE.SphereGeometry(0.02),
+                new THREE.SphereGeometry(0.02 * this.scale),
                 new THREE.MeshStandardMaterial({ 
-                    color: 0xff0000,
-                    emissive: 0xff0000,
+                    color: isExplosive ? 0x00ff00 : 0xff0000,
+                    emissive: isExplosive ? 0x00ff00 : 0xff0000,
                     emissiveIntensity: 0.5
                 })
             );
-            eye.position.set(0.06 * (i === 0 ? 1 : -1), 0, 0.35);
+            eye.position.set(0.06 * (i === 0 ? 1 : -1) * this.scale, 0, 0.35 * this.scale);
             head.add(eye);
         }
 
         this.rat.add(body, head, tail);
         this.rat.position.copy(position);
+        this.rat.position.y = this.FLOOR_Y;
         this.scene.add(this.rat);
 
-        // Add glow effect for boss
-        if (isBoss) {
-            const glowLight = new THREE.PointLight(0xff0000, 1, 3);
+        // Add glow effect for boss or explosive rats
+        if (isBoss || isExplosive) {
+            const glowLight = new THREE.PointLight(
+                isBoss ? 0xff0000 : 0x00ff00,
+                1,
+                3
+            );
             this.rat.add(glowLight);
         }
     }
 
     update(delta: number): boolean {
-        if (this._isDead) {
-            // Update blood particles
-            this.bloodParticles.forEach((particles, index) => {
-                const positions = particles.geometry.attributes.position.array;
-                for (let i = 0; i < positions.length; i += 3) {
-                    positions[i + 1] -= 0.1; // Fall down
-                }
-                particles.geometry.attributes.position.needsUpdate = true;
+        if (this._isDead) return this.isDeadAndRemovable();
 
-                // Remove particles after they fall
-                if (positions[1] < -2) {
-                    this.scene.remove(particles);
-                    this.bloodParticles.splice(index, 1);
-                }
-            });
-
-            return this.bloodParticles.length === 0; // Return true when all particles are gone
+        // Update glow effect for explosive rats
+        if (this.isExplosive && this.glowMaterial) {
+            this.glowIntensity = 0.5 + Math.sin(Date.now() * 0.005) * 0.2;
+            this.glowMaterial.emissiveIntensity = this.glowIntensity;
         }
 
-        // Boss-specific movement
-        if (this.isBoss) {
-            // More aggressive movement towards player
-            const directionToPlayer = new THREE.Vector3()
-                .subVectors(this.target.position, this.rat.position)
-                .normalize();
+        // Calculate target direction
+        const targetDirection = new THREE.Vector3()
+            .subVectors(this.target.position, this.rat.position)
+            .normalize();
+        targetDirection.y = 0; // Keep movement on the floor
 
-            // Faster and more direct movement for boss
-            this.velocity.x += (directionToPlayer.x * 0.8 - this.velocity.x) * 0.15;
-            this.velocity.z += (directionToPlayer.z * 0.8 - this.velocity.z) * 0.15;
+        // Add zigzag movement
+        const time = Date.now() * 0.001;
+        const zigzag = Math.sin(time * this.zigzagFrequency + this.zigzagOffset) * this.zigzagAmplitude;
+        const perpendicular = new THREE.Vector3(-targetDirection.z, 0, targetDirection.x).normalize();
+        targetDirection.addScaledVector(perpendicular, zigzag);
 
-            // Occasional charge attack
-            if (Math.random() < 0.02) {
-                this.velocity.multiplyScalar(2);
-            }
-        } else {
-            // Movement
-            const directionToPlayer = new THREE.Vector3()
-                .subVectors(this.target.position, this.rat.position)
-                .normalize();
+        // Smooth direction changes
+        this.currentDirection.lerp(targetDirection, this.MOVEMENT_SMOOTHING);
+        this.velocity.copy(this.currentDirection).multiplyScalar(this.speed * delta);
 
-            // Update velocity with some randomness
-            this.velocity.x += (directionToPlayer.x * 0.5 + (Math.random() - 0.5) * 0.2 - this.velocity.x) * 0.1;
-            this.velocity.z += (directionToPlayer.z * 0.5 + (Math.random() - 0.5) * 0.2 - this.velocity.z) * 0.1;
-        }
+        // Update position, keeping Y constant
+        this.rat.position.add(this.velocity);
+        this.rat.position.y = this.FLOOR_Y;
 
-        // Apply velocity
-        this.rat.position.x += this.velocity.x * delta * 2;
-        this.rat.position.z += this.velocity.z * delta * 2;
+        // Running animation with reduced tilt
+        this.runCycle += delta * (5 + this.speed); // Animation speed based on movement speed
+        
+        // Subtle body tilt based on speed
+        const tiltAmount = Math.min(0.1, this.speed * 0.02);
+        this.rat.rotation.x = Math.sin(this.runCycle) * tiltAmount;
 
-        // Running animation
-        this.runCycle += delta * 10;
-        this.rat.rotation.x = Math.sin(this.runCycle) * 0.2;
+        // Leg animation
         this.rat.children.forEach((child, index) => {
             if (index > 2) { // Legs
-                child.rotation.x = Math.sin(this.runCycle + (index % 2) * Math.PI) * 0.5;
+                const legPhase = this.runCycle + (index % 2) * Math.PI;
+                child.rotation.x = Math.sin(legPhase) * 0.3; // Reduced leg movement
+                // Add slight sideways motion to legs
+                child.rotation.z = Math.cos(legPhase) * 0.1;
             }
         });
 
-        // Look at player
-        this.rat.lookAt(this.target.position);
+        // Look at movement direction while staying level
+        const lookAtPos = new THREE.Vector3()
+            .copy(this.rat.position)
+            .add(this.currentDirection);
+        lookAtPos.y = this.rat.position.y;
+        this.rat.lookAt(lookAtPos);
+
+        // Check for explosion if explosive rat
+        if (this.isExplosive) {
+            const distanceToPlayer = this.rat.position.distanceTo(this.target.position);
+            if (distanceToPlayer < this.explosionRadius) {
+                this.explode();
+                return true;
+            }
+        }
 
         return false;
+    }
+
+    explode(): void {
+        // Create explosion effect
+        const explosionGeometry = new THREE.SphereGeometry(this.explosionRadius);
+        const explosionMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.5
+        });
+        const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+        explosion.position.copy(this.rat.position);
+        this.scene.add(explosion);
+
+        // Animate explosion
+        const startScale = 0.1;
+        const endScale = 1;
+        const duration = 0.3;
+        let time = 0;
+
+        const animate = () => {
+            time += 0.016;
+            const progress = time / duration;
+            const scale = THREE.MathUtils.lerp(startScale, endScale, progress);
+            explosion.scale.setScalar(scale);
+            explosionMaterial.opacity = 0.5 * (1 - progress);
+
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            } else {
+                this.scene.remove(explosion);
+            }
+        };
+        animate();
+
+        // Deal damage to player if in range
+        const distanceToPlayer = this.rat.position.distanceTo(this.target.position);
+        if (distanceToPlayer < this.explosionRadius) {
+            // Assuming game instance is accessible
+            const damage = this.explosionDamage * (1 - distanceToPlayer / this.explosionRadius);
+            this.game.takeDamage(damage, this.rat.position);
+        }
+
+        this.die();
     }
 
     takeDamage(position: THREE.Vector3): void {
@@ -640,6 +721,7 @@ class Game {
     private puzzleWall: THREE.Mesh | null = null;
     private puzzleUI: THREE.Group | null = null;
     private puzzleUIActive: boolean = false;
+    private storeManager: StoreManager;
 
     // Weapon system
     private weapons: { [key: string]: WeaponItem } = {
@@ -670,8 +752,19 @@ class Game {
     private equippedWeapon = 'basic';
     private equippedArmor = 'none';
     private defense: number = 0;
+    private difficulty: Difficulty = 'normal';
+    private ratConfig: RatConfig;
+    private currentLevelConfig: RatConfig;
+    private lastExplosiveRatSpawn: number = 0;
+    private readonly EXPLOSIVE_RAT_BASE_INTERVAL = 10000; // 10 seconds
+    private spawnEffects: THREE.Mesh[] = [];
+    private readonly SPAWN_ANIMATION_DURATION = 1000; // 1 second
+    private readonly SPAWN_EFFECT_SIZE = 2;
 
     constructor() {
+        this.ratConfig = { ...difficultySettings['normal'] };
+        this.currentLevelConfig = { ...this.ratConfig };
+        this.storeManager = new StoreManager();
         this.showLoadingScreen();
         this.init().then(() => {
             this.animate();
@@ -1286,23 +1379,24 @@ class Game {
         }
     }
 
-    private takeDamage(amount: number, attackerPosition?: THREE.Vector3): void {
-        const reducedDamage = Math.max(0, amount - (this.defense / 100 * amount));
-        this.life = Math.max(0, this.life - reducedDamage);
+    public takeDamage(amount: number, attackerPosition?: THREE.Vector3): void {
+        if (this.gameOver) return;
+
+        this.life = Math.max(0, this.life - amount);
         
         if (attackerPosition) {
             this.showDamageDirection(attackerPosition);
-            
-            const shakeIntensity = reducedDamage / 20;
-            this.camera.position.x += (Math.random() - 0.5) * shakeIntensity;
-            this.camera.position.y += (Math.random() - 0.5) * shakeIntensity;
-            this.camera.position.z += (Math.random() - 0.5) * shakeIntensity;
         }
-        
+
+        // Visual feedback
+        this.damageOverlay.style.opacity = '0.7';
+        setTimeout(() => {
+            this.damageOverlay.style.opacity = '0';
+        }, 200);
+
         if (this.life <= 0) {
-            this.endGame(false, "You died!");
+            this.endGame(false, 'Game Over - You Died!');
         }
-        this.updateHUD();
     }
 
     private setupMenuSystem(): void {
@@ -1394,9 +1488,29 @@ class Game {
     }
 
     private showSettingsMenu(): void {
-        this.hideAllMenus();
-        const settingsMenu = document.getElementById('settings-menu');
-        if (settingsMenu) settingsMenu.style.display = 'flex';
+        if (!this.isPaused) this.togglePause();
+
+        const menu = document.createElement('div');
+        menu.className = 'settings-menu';
+        menu.innerHTML = `
+            <h2>Settings</h2>
+            <div class="setting">
+                <label>Difficulty:</label>
+                <select id="difficulty">
+                    <option value="easy" ${this.difficulty === 'easy' ? 'selected' : ''}>Easy</option>
+                    <option value="normal" ${this.difficulty === 'normal' ? 'selected' : ''}>Normal</option>
+                    <option value="hard" ${this.difficulty === 'hard' ? 'selected' : ''}>Hard</option>
+                </select>
+            </div>
+            <!-- ... other settings ... -->
+        `;
+
+        const difficultySelect = menu.querySelector('#difficulty') as HTMLSelectElement;
+        difficultySelect.addEventListener('change', () => {
+            this.updateDifficulty(difficultySelect.value as Difficulty);
+        });
+
+        // ... rest of settings menu code ...
     }
 
     private showControlsMenu(): void {
@@ -1617,6 +1731,9 @@ class Game {
             if (this.currentArrow) {
                 this.currentArrow.update();
             }
+
+            // Update spawn effects
+            this.updateSpawnEffects();
         }
 
         // Show FPS if enabled
@@ -1720,18 +1837,102 @@ class Game {
         }
     }
 
+    private createSpawnEffect(position: THREE.Vector3): void {
+        // Create spawn effect ring
+        const geometry = new THREE.RingGeometry(0.5, 1, 32);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const ring = new THREE.Mesh(geometry, material);
+        ring.position.copy(position);
+        ring.rotation.x = -Math.PI / 2; // Lay flat on ground
+        ring.userData.createdAt = Date.now();
+        this.spawnEffects.push(ring);
+        this.scene.add(ring);
+
+        // Add to minimap
+        const minimapMarker = new THREE.Mesh(
+            new THREE.CircleGeometry(1, 32),
+            new THREE.MeshBasicMaterial({
+                color: 0xff0000,
+                transparent: true,
+                opacity: 0.8
+            })
+        );
+        minimapMarker.position.copy(position);
+        minimapMarker.rotation.x = -Math.PI / 2;
+        minimapMarker.userData.createdAt = Date.now();
+        this.spawnEffects.push(minimapMarker);
+        this.minimapScene.add(minimapMarker);
+    }
+
+    private updateSpawnEffects(): void {
+        const now = Date.now();
+        this.spawnEffects = this.spawnEffects.filter(effect => {
+            const age = now - effect.userData.createdAt;
+            if (age >= this.SPAWN_ANIMATION_DURATION) {
+                if (effect.parent === this.scene) {
+                    this.scene.remove(effect);
+                } else {
+                    this.minimapScene.remove(effect);
+                }
+                return false;
+            }
+
+            const progress = age / this.SPAWN_ANIMATION_DURATION;
+            const scale = this.SPAWN_EFFECT_SIZE * (1 - progress);
+            effect.scale.setScalar(scale);
+            
+            const material = effect.material as THREE.MeshBasicMaterial;
+            if (material && 'opacity' in material) {
+                material.opacity = 0.8 * (1 - progress);
+            }
+
+            return true;
+        });
+    }
+
     private spawnRat(): void {
-        // Random position around the player
+        if (this.gameOver || this.isPaused) return;
+
+        const now = Date.now();
+        const spawnExplosive = Math.random() < this.currentLevelConfig.explosiveRatChance &&
+            now - this.lastExplosiveRatSpawn >= this.EXPLOSIVE_RAT_BASE_INTERVAL;
+
         const angle = Math.random() * Math.PI * 2;
-        const distance = 15 + Math.random() * 5;
+        const distance = 20 + Math.random() * 10;
         const position = new THREE.Vector3(
             this.camera.position.x + Math.cos(angle) * distance,
-            1,
+            0,
             this.camera.position.z + Math.sin(angle) * distance
         );
 
-        const rat = new Rat(this.scene, this.camera, position, false);
-        this.rats.push(rat);
+        // Create spawn effect and schedule actual rat spawn
+        this.createSpawnEffect(position);
+        setTimeout(() => {
+            const rat = new Rat(
+                this.scene,
+                this.camera,
+                position,
+                this.currentLevelConfig,
+                this,
+                spawnExplosive,
+                false
+            );
+
+            if (spawnExplosive) {
+                this.lastExplosiveRatSpawn = now;
+            }
+
+            this.rats.push(rat);
+        }, this.SPAWN_ANIMATION_DURATION);
+
+        // Schedule next spawn
+        const randomVariation = (Math.random() - 0.5) * 1000;
+        setTimeout(() => this.spawnRat(), this.currentLevelConfig.spawnInterval + randomVariation);
     }
 
     private updateRats(delta: number): void {
@@ -2021,33 +2222,30 @@ class Game {
     }
 
     private spawnBossRat(): void {
-        if (this.bossRat) return;
-
         const angle = Math.random() * Math.PI * 2;
-        const distance = 20; // Spawn further away
+        const distance = 20 + Math.random() * 10;
         const position = new THREE.Vector3(
             this.camera.position.x + Math.cos(angle) * distance,
-            1,
+            0,
             this.camera.position.z + Math.sin(angle) * distance
         );
 
-        this.bossRat = new Rat(this.scene, this.camera, position, true); // true for boss
+        this.bossRat = new Rat(
+            this.scene,
+            this.camera,
+            position,
+            {
+                ...this.currentLevelConfig,
+                baseHealth: this.currentLevelConfig.baseHealth * 5,
+                baseDamage: this.currentLevelConfig.baseDamage * 2,
+                baseSpeed: this.currentLevelConfig.baseSpeed * 1.5
+            },
+            this,
+            false,
+            true
+        );
+
         this.isBossActive = true;
-        
-        // Show boss warning
-        const warning = document.createElement('div');
-        warning.style.position = 'fixed';
-        warning.style.top = '50%';
-        warning.style.left = '50%';
-        warning.style.transform = 'translate(-50%, -50%)';
-        warning.style.color = 'red';
-        warning.style.fontSize = '48px';
-        warning.style.fontWeight = 'bold';
-        warning.style.textShadow = '0 0 10px rgba(255,0,0,0.5)';
-        warning.textContent = 'BOSS RAT APPROACHING!';
-        document.body.appendChild(warning);
-        
-        setTimeout(() => warning.remove(), 3000);
     }
 
     private addXP(amount: number): void {
@@ -2060,26 +2258,43 @@ class Game {
 
     private levelUp(): void {
         this.level++;
-        this.xp -= this.xpToNextLevel;
-        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
+        this.xp = 0;
+        this.xpToNextLevel *= 1.5;
         
-        // Show puzzle instead of shop
-        this.showPuzzle();
+        // Update rat configuration for new level
+        this.updateLevelConfig();
         
         // Show level up message
-        const levelUpMsg = document.createElement('div');
-        levelUpMsg.style.position = 'fixed';
-        levelUpMsg.style.top = '30%';
-        levelUpMsg.style.left = '50%';
-        levelUpMsg.style.transform = 'translate(-50%, -50%)';
-        levelUpMsg.style.color = '#ffff00';
-        levelUpMsg.style.fontSize = '48px';
-        levelUpMsg.style.fontWeight = 'bold';
-        levelUpMsg.style.textShadow = '0 0 10px rgba(255,255,0,0.5)';
-        levelUpMsg.textContent = `LEVEL UP! Level ${this.level}`;
-        document.body.appendChild(levelUpMsg);
+        const message = document.createElement('div');
+        message.className = 'level-up-message';
+        message.textContent = `Level Up! Level ${this.level}`;
+        document.body.appendChild(message);
         
-        setTimeout(() => levelUpMsg.remove(), 2000);
+        setTimeout(() => {
+            document.body.removeChild(message);
+        }, 3000);
+    }
+
+    private updateDifficulty(difficulty: Difficulty): void {
+        this.difficulty = difficulty;
+        this.ratConfig = { ...difficultySettings[difficulty] };
+        this.updateLevelConfig();
+    }
+
+    private updateLevelConfig(): void {
+        const level = this.level - 1; // Level starts at 1
+        this.currentLevelConfig = {
+            ...this.ratConfig,
+            baseHealth: this.ratConfig.baseHealth * Math.pow(levelProgression.healthMultiplier, level),
+            baseDamage: this.ratConfig.baseDamage * Math.pow(levelProgression.damageMultiplier, level),
+            baseSpeed: this.ratConfig.baseSpeed * Math.pow(levelProgression.speedMultiplier, level),
+            zigzagAmplitude: this.ratConfig.zigzagAmplitude * Math.pow(levelProgression.zigzagMultiplier, level),
+            zigzagFrequency: this.ratConfig.zigzagFrequency * Math.pow(levelProgression.zigzagMultiplier, level),
+            spawnInterval: this.ratConfig.spawnInterval * Math.pow(levelProgression.spawnRateMultiplier, level),
+            explosiveRatChance: this.ratConfig.explosiveRatChance * Math.pow(levelProgression.explosiveRatMultiplier, level),
+            explosionRadius: this.ratConfig.explosionRadius,
+            explosionDamage: this.ratConfig.explosionDamage * Math.pow(levelProgression.damageMultiplier, level)
+        };
     }
 
     private showPuzzle(): void {
@@ -2420,15 +2635,30 @@ class Game {
     }
 
     private toggleStore(): void {
-        this.isPaused = !this.isPaused;
-        if (this.isPaused) {
+        const shop = document.querySelector('.shop-container');
+        if (shop) {
+            shop.remove();
+            this.isPaused = false;
+            this.controls.lock();
+        } else {
+            this.isPaused = true;
             this.showStore();
             this.controls.unlock();
-        } else {
-            const shop = document.querySelector('.shop-container');
-            if (shop) shop.remove();
-            this.controls.lock();
         }
+
+        // Add event listener for ESC key to close store
+        const handleEsc = (event: KeyboardEvent) => {
+            if (event.code === 'Escape' && this.isPaused) {
+                const shop = document.querySelector('.shop-container');
+                if (shop) {
+                    shop.remove();
+                    this.isPaused = false;
+                    this.controls.lock();
+                    document.removeEventListener('keydown', handleEsc);
+                }
+            }
+        };
+        document.addEventListener('keydown', handleEsc);
     }
 
     private showStore(): void {
@@ -2705,7 +2935,7 @@ class Game {
         shop.appendChild(content);
 
         const closeButton = document.createElement('button');
-        closeButton.textContent = 'Close (G)';
+        closeButton.textContent = 'Close (G or ESC)';
         closeButton.style.display = 'block';
         closeButton.style.margin = '20px auto 0';
         closeButton.style.padding = '10px 20px';
@@ -2714,7 +2944,11 @@ class Game {
         closeButton.style.borderRadius = '5px';
         closeButton.style.color = 'white';
         closeButton.style.cursor = 'pointer';
-        closeButton.onclick = () => this.toggleStore();
+        closeButton.onclick = () => {
+            shop.remove();
+            this.isPaused = false;
+            this.controls.lock();
+        };
         shop.appendChild(closeButton);
 
         document.body.appendChild(shop);
